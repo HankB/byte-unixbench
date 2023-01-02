@@ -1,0 +1,114 @@
+#!/usr/bin/perl -w
+
+use strict;
+
+############################################################################
+# Test getCpuInfo() for at least two vaiants of Linux: Debian/ARM and 
+# Debian/X86_64 (for now.)
+############################################################################
+
+use Test::Simple tests => 1;
+
+## Copied from ../Run
+
+# CPU flags of interest.
+my $x86CpuFlags = {
+    'pae' => "Physical Address Ext",
+    'sep' => "SYSENTER/SYSEXIT",
+    'syscall' => "SYSCALL/SYSRET",
+    'mmx' => "MMX",
+    'mmxext' => "AMD MMX",
+    'cxmmx' => "Cyrix MMX",
+    'xmm' => "Streaming SIMD",
+    'xmm2' => "Streaming SIMD-2",
+    'xmm3' => "Streaming SIMD-3",
+    'ht' => "Hyper-Threading",
+    'ia64' => "IA-64 processor",
+    'lm' => "x86-64",
+    'vmx' => "Intel virtualization",
+    'svm' => "AMD virtualization",
+};
+
+# Extract interesting flags from the given processor flags string and
+# convert them to descriptive names.
+sub processCpuFlags {
+    my ( $flagStr ) = @_;
+
+    my @names;
+    foreach my $f (sort split(/\s+/, $flagStr)) {
+        my $name = $x86CpuFlags->{$f};
+        push(@names, $name) if $name;
+    }
+
+    join(", ", @names);
+}
+
+
+# Get information on the CPUs in the system.  Returns a reference to an
+# array of N entries, one per CPU, where each entry is a hash containing
+# these fields:
+# describing the model etc.  Returns undef if the information can't be got.
+#
+# future: on systems without /proc/cpuinfo, might check for Perl modules:
+#   Sys::Info::Device::CPU or Sys::CpuAffinity
+sub getCpuInfo {
+    if (!("$^O" eq "darwin")) {
+        open(my $fd, "<", "/proc/cpuinfo") || return undef;
+
+        my $cpus = [ ];
+        my $cpu = 0;
+        while (<$fd>) {
+            chomp;
+            my ( $field, $val ) = split(/[ \t]*:[ \t]*/);
+            next if (!$field || !$val);
+            if ($field eq "processor") {
+                $cpu = $val;
+            } elsif ($field eq "model name") {
+                my $model = $val;
+                $model =~ s/  +/ /g;
+                $cpus->[$cpu]{'model'} = $model;
+            } elsif ($field eq "bogomips" || $field eq "BogoMIPS") {
+                $cpus->[$cpu]{'bogo'} = $val;
+            } elsif ($field eq "flags") {
+                $cpus->[$cpu]{'flags'} = processCpuFlags($val);
+            }
+        }
+
+        close($fd);
+
+        $cpus;
+
+    } else {
+
+        my $model = getCmdOutput("sysctl -n machdep.cpu.brand_string");
+        my $flags = getCmdOutput("sysctl -n machdep.cpu.features | tr [A-Z] [a-z]");
+        my $ncpu  = getCmdOutput("sysctl -n hw.ncpu");
+
+        my $cpus = [ ];
+        my $cpu = 0;
+
+        for ($cpu = 0; $cpu < $ncpu; $cpu++) {
+            $cpus->[$cpu]{'model'} = $model;
+            $cpus->[$cpu]{'bogo'}  = 0;
+            $cpus->[$cpu]{'flags'} = processCpuFlags($flags);
+        }
+        $cpus;
+    }
+}
+
+
+my $foo = 0;
+my $bar = 0;
+
+ok( $foo eq $bar, 'foo is bar' );
+
+print( "OS:\"$^O\"\n");
+
+my $cpus = getCpuInfo();
+
+foreach(@$cpus) {
+    print( "\n$_\n");
+    while ( (my $k,my $v) = each %$_ ) {
+        print "$k => $v\n";
+    }
+}
